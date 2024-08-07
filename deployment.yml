@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+# Запуск 4 подов справляющиеся с пиковой нагрузкой
+  replicas: 4 # Минимальное кол-во реплик
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+      - name: app-container
+        image: nginx:latest
+        resources:
+          requests:
+            memory: "128Mi" # Минимальный запрос памяти для каждого пода
+            cpu: "0.1" # Минимальный запрос CPU, чтобы справляться с дневной нагрузкой
+          limits:
+            memory: "256Mi" # Условие необходимое для постоянного 256M памяти
+        readinessProbe: # Проверка запуска ноды перед подачей трафика
+          httpGet:
+            path: /ready-probe # Проверка готовности
+            port: 80
+          initialDelaySeconds: 5 # Задержка перед запуском следующего пода
+          periodSeconds: 10 # Частота проверок готовности
+        livenessProbe:
+          httpGet:
+            path: /ready-probe # Проверки живучести
+            port: 80
+          initialDelaySeconds: 5 # Задержка перед первой проверкой живучести
+          periodSeconds: 10 # Частота проверок живучести
+          failureThreshould: 5
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - app
+              topologyKey: "topology.kubernetes.io/zone"
+
+---
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: app-autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: app
+  minReplicas: 1 # Минимальное количество подов для экономии ресурсов ночью
+  maxReplicas: 4 # Максимальное количество подов для масштабирования в часы пик
+  metrics:
+  - type: Resource #Тип ресурса по которому будет происходить масштабирование
+    resource:
+      name: cpu
+      target:
+        type: Utilization # Масштабирование будет происходить на основе использования ресурса в процентах
+        averageUtilization: 50 # Масштабируется количество реплик, чтобы поддерживать среднюю загрузку CPU на уровне 50% от запрашиваемых ресурсов
